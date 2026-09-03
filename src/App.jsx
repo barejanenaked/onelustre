@@ -2220,7 +2220,7 @@ export default function OneLustre() {
       const hay = [
         it.shape, it.category, it.origin, it.status,
         admin ? it.supplier : "", admin ? it.supplierCountry : "",
-        ...it.stones.flatMap((s) => [s.carat, s.colour, s.clarity, s.certNo, s.inscription]),
+        ...it.stones.flatMap((s) => [(parseFloat(s.carat) || 0).toFixed(2), s.colour, s.clarity, s.certNo, s.inscription]),
       ].join(" ").toLowerCase();
       return hay.includes(q);
     });
