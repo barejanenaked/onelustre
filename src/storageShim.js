@@ -3,85 +3,71 @@
  * `window.storage` is a real, hosted, cross-device key-value store
  * provided by Anthropic. That API does not exist outside Claude.ai.
  *
- * This file gives the exact same three methods (get / set / delete),
- * backed by the browser's own localStorage, so the app runs unmodified
- * once deployed on its own.
+ * This file gives the exact same four methods (get / set / delete /
+ * list), backed by a Supabase table (see `src/supabaseClient.js`), so
+ * the app runs unmodified once deployed on its own — and, unlike a
+ * localStorage-backed version, the book is one shared source of truth:
+ * an edit Jane makes on her phone shows up for her, Vanessa, and every
+ * supplier on any device, because it's read from and written to the
+ * same database row rather than to one browser's private storage.
  *
- * IMPORTANT — read this before you rely on it:
- * localStorage lives in ONE browser, on ONE device. It is NOT shared
- * between people. If you (the jeweller) open this site on your phone
- * and add a stone, that stone will NOT appear when your client opens
- * the same public link on her laptop — her browser has its own,
- * completely separate storage.
- *
- * That means this shim is honest and correct for:
- *   - trying the app out
- *   - a single-device personal copy
- *   - a demo
- *
- * It is NOT a substitute for a real shared backend. For the book to
- * behave the same way once deployed as it does inside Claude — one
- * source of truth that you edit and everyone else reads — the app
- * needs a real database behind it (Supabase is a natural fit, and
- * the underlying data shape here — one JSON document per book — maps
- * onto a single table with very little rework).
+ * The `book_storage` table has a composite primary key on (key, shared)
+ * — that's the same "personal vs shared namespace" distinction the
+ * original artifact API and the localStorage shim both used.
  */
 
-const PREFIX = "one-lustre:";
+import { supabase } from "./supabaseClient.js";
 
-function readAll() {
-  try {
-    const raw = localStorage.getItem(PREFIX + "__store__");
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeAll(store) {
-  localStorage.setItem(PREFIX + "__store__", JSON.stringify(store));
-}
-
-function scopedKey(key, shared) {
-  return `${shared ? "shared" : "personal"}::${key}`;
-}
+const TABLE = "book_storage";
 
 const storageShim = {
   async get(key, shared = false) {
-    const store = readAll();
-    const k = scopedKey(key, shared);
-    if (!(k in store)) {
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select("value")
+      .eq("key", key)
+      .eq("shared", shared)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) {
       // The real API throws (or in some paths returns null) for a
       // missing key. Throwing matches what One Lustre's own code
       // already expects and catches.
       throw new Error(`No value stored for "${key}"`);
     }
-    return { key, value: store[k], shared };
+    return { key, value: data.value, shared };
   },
 
   async set(key, value, shared = false) {
-    const store = readAll();
-    store[scopedKey(key, shared)] = value;
-    writeAll(store);
+    const { error } = await supabase
+      .from(TABLE)
+      .upsert(
+        { key, shared, value, updated_at: new Date().toISOString() },
+        { onConflict: "key,shared" }
+      );
+    if (error) throw error;
     return { key, value, shared };
   },
 
   async delete(key, shared = false) {
-    const store = readAll();
-    const k = scopedKey(key, shared);
-    const existed = k in store;
-    delete store[k];
-    writeAll(store);
-    return { key, deleted: existed, shared };
+    const { data, error } = await supabase
+      .from(TABLE)
+      .delete()
+      .eq("key", key)
+      .eq("shared", shared)
+      .select("key");
+    if (error) throw error;
+    return { key, deleted: (data || []).length > 0, shared };
   },
 
   async list(prefix = "", shared = false) {
-    const store = readAll();
-    const tag = shared ? "shared::" : "personal::";
-    const keys = Object.keys(store)
-      .filter((k) => k.startsWith(tag))
-      .map((k) => k.slice(tag.length))
-      .filter((k) => k.startsWith(prefix));
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select("key")
+      .eq("shared", shared)
+      .like("key", `${prefix}%`);
+    if (error) throw error;
+    const keys = (data || []).map((row) => row.key);
     return { keys, prefix, shared };
   },
 };
