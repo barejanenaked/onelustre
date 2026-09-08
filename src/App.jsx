@@ -192,7 +192,7 @@ const blankStone = () => ({
   carat: "", colour: "", clarity: "", cut: "", polish: "", symmetry: "",
   fluorescence: "", inscription: "", cert: "", certNo: "", noCert: false,
   cutStyle: "", measurements: "", certDate: "",
-  table: "", depth: "", crown: "", pavilion: "",
+  table: "", depth: "", crown: "", pavilion: "", rapPerCt: "",
 });
 
 /* The GIA report for each stone, keyed by report number. */
@@ -405,6 +405,17 @@ const netPct = (it, st) => {
   return c ? ((sellUSD(it, st) - c) / c) * 100 : 0;
 };
 const convert = (usd, code, st) => (code === "USD" ? usd : usd * (st.rates[code] || 1));
+/* Rapaport lists prices in hundreds of USD per carat — typed in exactly as
+   printed on the sheet, so this is the only place the ×100 happens. */
+const rapValue = (s) => (parseFloat(s.rapPerCt) || 0) * 100 * (parseFloat(s.carat) || 0);
+const totalRapValue = (it) => it.stones.reduce((a, s) => a + rapValue(s), 0);
+/* Positive = bought under Rap (the usual, desirable case); negative = paid over Rap.
+   null when no Rap figure has been entered for any stone in the item yet. */
+const offRapPct = (it, st) => {
+  const rap = totalRapValue(it);
+  if (!rap) return null;
+  return ((rap - costUSD(it, st)) / rap) * 100;
+};
 const caratLabel = (it) => it.stones.map((s) => (parseFloat(s.carat) || 0).toFixed(2)).join("  +  ");
 const specLine = (it) => {
   const s = it.stones[0] || {};
@@ -1095,6 +1106,14 @@ function DetailSheet({ item, settings, onClose, admin, onCert, pricesVisible = t
                   {` · ${item.supplier}`}{item.supplierLocation ? ` (${item.supplierLocation})` : ""}
                 </div>
               )}
+              {admin && pricesVisible && !item.priceTbc && offRapPct(item, settings) !== null && (
+                <div className="mt-2" style={{ fontFamily: TEXT, fontSize: 13, lineHeight: 1.7 }}>
+                  <span style={{ color: offRapPct(item, settings) >= 0 ? T.green : T.rust, fontWeight: 500 }}>
+                    {Math.abs(offRapPct(item, settings)).toFixed(1)}% {offRapPct(item, settings) >= 0 ? "off" : "over"} Rapaport
+                  </span>
+                  <span style={{ color: T.ink30 }}> · Rap value {money(totalRapValue(item), "USD")}</span>
+                </div>
+              )}
               {admin && !pricesVisible && (
                 <div className="mt-4" style={{ fontFamily: TEXT, fontSize: 13, color: T.ink60, lineHeight: 1.7 }}>
                   {item.supplier}{item.supplierLocation ? ` (${item.supplierLocation})` : ""}
@@ -1264,6 +1283,9 @@ function Editor({ draft, setDraft, clients, onSave, onClose }) {
                 <Field label="Polish"><SelectInput value={s.polish} onChange={(e) => setStone(i, "polish", e.target.value)} options={CUT_SCALE} /></Field>
                 <Field label="Symmetry"><SelectInput value={s.symmetry} onChange={(e) => setStone(i, "symmetry", e.target.value)} options={CUT_SCALE} /></Field>
                 <Field label="Fluorescence"><SelectInput value={s.fluorescence} onChange={(e) => setStone(i, "fluorescence", e.target.value)} options={FLUOR_SCALE} /></Field>
+                <Field label="Rap $/ct (00s)">
+                  <TextInput type="number" step="1" value={s.rapPerCt || ""} onChange={(e) => setStone(i, "rapPerCt", e.target.value)} placeholder="e.g. 335" />
+                </Field>
                 <Field label="Measurements"><TextInput value={s.measurements} onChange={(e) => setStone(i, "measurements", e.target.value)} placeholder="10.80 – 10.88 × 6.82 mm" /></Field>
                 <Field label="Table %"><TextInput type="number" step="0.1" value={s.table ?? ""} onChange={(e) => setStone(i, "table", e.target.value)} placeholder="57" /></Field>
                 <Field label="Depth %"><TextInput type="number" step="0.1" value={s.depth ?? ""} onChange={(e) => setStone(i, "depth", e.target.value)} placeholder="62.7" /></Field>
@@ -2425,12 +2447,13 @@ export default function OneLustre() {
   };
 
   const exportCsv = () => {
-    const head = ["Ref","Kind","Category","Origin","Shape","Carat","Colour","Clarity","Cut","Polish","Symmetry","Fluorescence","Measurements","Lab","Report","Inscription","Supplier","Location","Country","Quoted","Currency","Cost USD","Margin %","Discount %","Sell SGD","Sell USD","Profit SGD","Profit USD","Net margin %","Status","Price","Off brief"];
+    const head = ["Ref","Kind","Category","Origin","Shape","Carat","Colour","Clarity","Cut","Polish","Symmetry","Fluorescence","Rap $/ct","Measurements","Lab","Report","Inscription","Supplier","Location","Country","Quoted","Currency","Cost USD","Margin %","Discount %","Sell SGD","Sell USD","Profit SGD","Profit USD","Net margin %","% off Rap","Status","Price","Off brief"];
     const rows = items.flatMap((it) => it.stones.map((s, i) => {
       const usd = sellUSD(it, settings);
+      const rapPct = offRapPct(it, settings);
       return [
         it.id, it.kind, it.category, it.origin, it.shape, s.carat, s.colour, s.clarity, s.cut, s.polish,
-        s.symmetry, s.fluorescence, s.measurements, s.cert, s.certNo, s.inscription,
+        s.symmetry, s.fluorescence, s.rapPerCt, s.measurements, s.cert, s.certNo, s.inscription,
         it.supplier, it.supplierLocation, it.supplierCountry,
         i === 0 ? it.cost : "", i === 0 ? (it.costCurrency || "USD") : "",
         i === 0 && !it.priceTbc ? Math.round(costUSD(it, settings)) : "",
@@ -2440,6 +2463,7 @@ export default function OneLustre() {
         i === 0 && !it.priceTbc ? Math.round(convert(profitUSD(it, settings), "SGD", settings)) : "",
         i === 0 && !it.priceTbc ? Math.round(profitUSD(it, settings)) : "",
         i === 0 && !it.priceTbc ? netPct(it, settings).toFixed(1) : "",
+        i === 0 && rapPct !== null ? rapPct.toFixed(1) : "",
         it.status, it.priceTbc ? "Awaiting quote" : it.indicative ? "Indicative" : "Firm",
         i === 0 ? briefGaps(it).join("; ") : "",
       ].map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",");
@@ -2983,7 +3007,7 @@ export default function OneLustre() {
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1510 }}>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${T.gold}` }}>
-                  {["Stone","Ct","Col","Clar","Cut / Pol / Sym","Fluor","Report","Supplier","Cost quoted","Cost/ct","","Margin %","Disc %","Sell SGD","Sell USD","Profit SGD","Status",""].map((h) => (
+                  {["Stone","Ct","Col","Clar","Cut / Pol / Sym","Fluor","Report","Supplier","Cost quoted","Cost/ct","Rap/ct","vs Rap","","Margin %","Disc %","Sell SGD","Sell USD","Profit SGD","Status",""].map((h) => (
                     <th key={h} className="px-3 py-3 text-left"
                       style={{ fontFamily: TEXT, fontSize: 9.5, letterSpacing: "0.18em", color: T.ink60, textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
                   ))}
@@ -2995,7 +3019,7 @@ export default function OneLustre() {
                     const n = visible.filter((x) => (x.supplierCountry || x.supplierLocation || "Unplaced") === row.header).length;
                     return (
                       <tr key={`h${ri}`}>
-                        <td colSpan={18} className="px-3 py-2" style={{ background: T.goldSoft, borderBottom: `1px solid ${T.rule}` }}>
+                        <td colSpan={20} className="px-3 py-2" style={{ background: T.goldSoft, borderBottom: `1px solid ${T.rule}` }}>
                           <span style={{ fontFamily: TEXT, fontSize: 10.5, letterSpacing: "0.24em", textTransform: "uppercase", color: T.gold }}>{row.header}</span>
                           <span style={{ fontFamily: TEXT, fontSize: 12, color: T.ink30, marginLeft: 12 }}>
                             {n} {n === 1 ? "listing" : "listings"}
@@ -3077,6 +3101,16 @@ export default function OneLustre() {
                       </td>
                       <td className="px-3 py-3" style={{ fontFamily: TEXT, fontSize: 12, color: T.ink60, whiteSpace: "nowrap" }}>
                         {!pricesVisible ? <Hidden /> : it.priceTbc ? "—" : money(costUSD(it, settings) / (totalCarat(it) || 1), "USD")}
+                      </td>
+                      <td className="px-3 py-3" style={{ fontFamily: TEXT, fontSize: 12, color: T.ink60, whiteSpace: "nowrap" }}>
+                        {it.stones.some((x) => x.rapPerCt) ? it.stones.map((x) => x.rapPerCt || "—").join(" / ") : "—"}
+                      </td>
+                      <td className="px-3 py-3" style={{ fontFamily: TEXT, fontSize: 12, whiteSpace: "nowrap" }}>
+                        {!pricesVisible || it.priceTbc || offRapPct(it, settings) === null ? "—" : (
+                          <span style={{ color: offRapPct(it, settings) >= 0 ? T.green : T.rust, fontWeight: 500 }}>
+                            {Math.abs(offRapPct(it, settings)).toFixed(1)}% {offRapPct(it, settings) >= 0 ? "off Rap" : "over Rap"}
+                          </span>
+                        )}
                       </td>
                       <td className="px-2 py-3">
                         <span role="checkbox" aria-checked={compare.includes(it.id)} tabIndex={0}
