@@ -89,6 +89,28 @@ const headingFont = (st, size) => pairing(st).heading === "script"
 const KEY = "privatebook:v1";
 const SEED_VERSION = 40;
 
+/* Remembers who's logged in (admin / a client / a supplier) in this
+   browser, so refreshing the page doesn't ask for the passcode again.
+   This is the same screen-lock model as the passcode itself — nothing
+   here is encrypted or secret, it just skips re-typing a code you
+   already typed once on this device. */
+const SESSION_KEY = "one-lustre:session";
+const readSession = () => {
+  try {
+    const s = JSON.parse(localStorage.getItem(SESSION_KEY));
+    if (!s || !["admin", "client", "supplier"].includes(s.view)) return null;
+    return s;
+  } catch {
+    return null;
+  }
+};
+const persistSession = (view, id) => {
+  try { localStorage.setItem(SESSION_KEY, JSON.stringify({ view, id: id || null })); } catch {}
+};
+const clearSession = () => {
+  try { localStorage.removeItem(SESSION_KEY); } catch {}
+};
+
 const fluorFlag = (v = "") => {
   const t = String(v);
   if (/yellow/i.test(t)) return `${t} fluorescence`;
@@ -1989,11 +2011,12 @@ export default function OneLustre() {
   const [enquiries, setEnquiries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-  const [view, setView] = useState("client");
-  const [unlocked, setUnlocked] = useState(false);
-  const [gated, setGated] = useState(true);
-  const [activeClient, setActiveClient] = useState(null);
-  const [activeSupplier, setActiveSupplier] = useState(null);
+  const [session] = useState(readSession);
+  const [view, setView] = useState(session?.view || "client");
+  const [unlocked, setUnlocked] = useState(session?.view === "admin");
+  const [gated, setGated] = useState(!session);
+  const [activeClient, setActiveClient] = useState(session?.view === "client" ? session.id : null);
+  const [activeSupplier, setActiveSupplier] = useState(session?.view === "supplier" ? session.id : null);
   const [compare, setCompare] = useState([]);
   const [showCompare, setShowCompare] = useState(false);
   const [query, setQuery] = useState("");
@@ -2374,16 +2397,17 @@ export default function OneLustre() {
       setActiveClient(as === "client" ? id : null);
       setActiveSupplier(as === "supplier" ? id : null);
       setGated(false);
+      persistSession(as, id);
     }} />;
   }
 
   if (view === "supplier") {
     const sup = (settings.suppliers || []).find((x) => x.id === activeSupplier);
-    if (!sup) { setGated(true); return null; }
+    if (!sup) { setGated(true); clearSession(); return null; }
     return (
       <SupplierDesk
         supplier={sup} items={items} settings={settings}
-        onLock={() => { setGated(true); setView("client"); setActiveSupplier(null); setUnlocked(false); }}
+        onLock={() => { setGated(true); setView("client"); setActiveSupplier(null); setUnlocked(false); clearSession(); }}
         onSaveProfile={(f) => commit(items, {
           ...settings,
           suppliers: (settings.suppliers || []).map((x) => (x.id === sup.id ? { ...x, ...f } : x)),
@@ -2454,7 +2478,7 @@ export default function OneLustre() {
             {admin
               ? <Button onClick={toClient}><Eye size={13} /> Client view</Button>
               : <Button onClick={goAdmin}><Lock size={13} /> Trade view</Button>}
-            <Button onClick={() => { setGated(true); setUnlocked(false); setView("client"); setActiveClient(null); setActiveSupplier(null); setSelected(null); setCompare([]); }}>
+            <Button onClick={() => { setGated(true); setUnlocked(false); setView("client"); setActiveClient(null); setActiveSupplier(null); setSelected(null); setCompare([]); clearSession(); }}>
               <Lock size={13} /> Lock
             </Button>
           </div>
