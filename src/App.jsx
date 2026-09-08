@@ -2032,6 +2032,13 @@ export default function OneLustre() {
   const [countryFilter, setCountryFilter] = useState("All");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [supplierFilter, setSupplierFilter] = useState("All");
+  const [caratMin, setCaratMin] = useState("");
+  const [caratMax, setCaratMax] = useState("");
+  const [colourMin, setColourMin] = useState("All");
+  const [clarityMin, setClarityMin] = useState("All");
+  const [cutMin, setCutMin] = useState("All");
+  const [polishMin, setPolishMin] = useState("All");
+  const [symmetryMin, setSymmetryMin] = useState("All");
   const [selected, setSelected] = useState(null);
   const [draft, setDraft] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -2274,6 +2281,13 @@ export default function OneLustre() {
       if (filter !== "All" && it.origin !== filter && it.category !== filter) return false;
       if (countryFilter !== "All" && (it.supplierCountry || "") !== countryFilter) return false;
       if (admin && supplierFilter !== "All" && it.supplier !== supplierFilter) return false;
+      if (caratMin && totalCarat(it) < parseFloat(caratMin)) return false;
+      if (caratMax && totalCarat(it) > parseFloat(caratMax)) return false;
+      if (colourMin !== "All" && worstRank(it, COLOUR_SCALE, "colour") > COLOUR_SCALE.indexOf(colourMin)) return false;
+      if (clarityMin !== "All" && worstRank(it, CLARITY_SCALE, "clarity") > CLARITY_SCALE.indexOf(clarityMin)) return false;
+      if (cutMin !== "All" && worstRank(it, CUT_SCALE, "cut") > CUT_SCALE.indexOf(cutMin)) return false;
+      if (polishMin !== "All" && worstRank(it, CUT_SCALE, "polish") > CUT_SCALE.indexOf(polishMin)) return false;
+      if (symmetryMin !== "All" && worstRank(it, CUT_SCALE, "symmetry") > CUT_SCALE.indexOf(symmetryMin)) return false;
       if (!q) return true;
       const hay = [
         it.shape, it.category, it.origin, it.status,
@@ -2282,7 +2296,8 @@ export default function OneLustre() {
       ].join(" ").toLowerCase();
       return hay.includes(q);
     });
-  }, [items, query, filter, countryFilter, supplierFilter, admin, client]);
+  }, [items, query, filter, countryFilter, supplierFilter, admin, client,
+      caratMin, caratMax, colourMin, clarityMin, cutMin, polishMin, symmetryMin]);
 
   const ordered = useMemo(
     () => sortItems(visible, [sortKey, sortKey2].filter(Boolean), settings),
@@ -2315,16 +2330,28 @@ export default function OneLustre() {
   );
   const activeFilters =
     (filter !== "All" ? 1 : 0) + (countryFilter !== "All" ? 1 : 0) +
-    (admin && supplierFilter !== "All" ? 1 : 0) + (sortKey2 ? 1 : 0);
+    (admin && supplierFilter !== "All" ? 1 : 0) + (sortKey2 ? 1 : 0) +
+    (caratMin ? 1 : 0) + (caratMax ? 1 : 0) +
+    (colourMin !== "All" ? 1 : 0) + (clarityMin !== "All" ? 1 : 0) +
+    (cutMin !== "All" ? 1 : 0) + (polishMin !== "All" ? 1 : 0) + (symmetryMin !== "All" ? 1 : 0);
 
   const clearFilters = () => {
     setFilter("All"); setCountryFilter("All"); setSupplierFilter("All"); setSortKey2("");
+    setCaratMin(""); setCaratMax(""); setColourMin("All"); setClarityMin("All");
+    setCutMin("All"); setPolishMin("All"); setSymmetryMin("All");
   };
 
   const chips = [
     filter !== "All" && { label: filter, clear: () => setFilter("All") },
     countryFilter !== "All" && { label: countryFilter, clear: () => setCountryFilter("All") },
     admin && supplierFilter !== "All" && { label: supplierFilter, clear: () => setSupplierFilter("All") },
+    caratMin && { label: `${caratMin}+ ct`, clear: () => setCaratMin("") },
+    caratMax && { label: `up to ${caratMax} ct`, clear: () => setCaratMax("") },
+    colourMin !== "All" && { label: `${colourMin} colour or better`, clear: () => setColourMin("All") },
+    clarityMin !== "All" && { label: `${clarityMin} clarity or better`, clear: () => setClarityMin("All") },
+    cutMin !== "All" && { label: `${cutMin} cut or better`, clear: () => setCutMin("All") },
+    polishMin !== "All" && { label: `${polishMin} polish or better`, clear: () => setPolishMin("All") },
+    symmetryMin !== "All" && { label: `${symmetryMin} symmetry or better`, clear: () => setSymmetryMin("All") },
     sortKey2 && { label: `Then by ${SORTS[sortKey2].toLowerCase()}`, clear: () => setSortKey2("") },
   ].filter(Boolean);
 
@@ -2849,6 +2876,45 @@ export default function OneLustre() {
                     options={suppliers} />
                 </Field>
               )}
+              <Field label="Carat">
+                <div className="flex items-center" style={{ gap: 6 }}>
+                  <TextInput type="number" step="0.01" min="0" value={caratMin}
+                    onChange={(e) => setCaratMin(e.target.value)} placeholder="Min" style={{ width: "100%" }} />
+                  <span style={{ color: T.ink30 }}>–</span>
+                  <TextInput type="number" step="0.01" min="0" value={caratMax}
+                    onChange={(e) => setCaratMax(e.target.value)} placeholder="Max" style={{ width: "100%" }} />
+                </div>
+              </Field>
+              <Field label="Colour">
+                <select value={colourMin} onChange={(e) => setColourMin(e.target.value)} style={inputStyle}>
+                  <option value="All">Any</option>
+                  {COLOUR_SCALE.map((c) => <option key={c} value={c}>{c} or better</option>)}
+                </select>
+              </Field>
+              <Field label="Clarity">
+                <select value={clarityMin} onChange={(e) => setClarityMin(e.target.value)} style={inputStyle}>
+                  <option value="All">Any</option>
+                  {CLARITY_SCALE.map((c) => <option key={c} value={c}>{c} or better</option>)}
+                </select>
+              </Field>
+              <Field label="Cut">
+                <select value={cutMin} onChange={(e) => setCutMin(e.target.value)} style={inputStyle}>
+                  <option value="All">Any</option>
+                  {CUT_SCALE.map((c) => <option key={c} value={c}>{c} or better</option>)}
+                </select>
+              </Field>
+              <Field label="Polish">
+                <select value={polishMin} onChange={(e) => setPolishMin(e.target.value)} style={inputStyle}>
+                  <option value="All">Any</option>
+                  {CUT_SCALE.map((c) => <option key={c} value={c}>{c} or better</option>)}
+                </select>
+              </Field>
+              <Field label="Symmetry">
+                <select value={symmetryMin} onChange={(e) => setSymmetryMin(e.target.value)} style={inputStyle}>
+                  <option value="All">Any</option>
+                  {CUT_SCALE.map((c) => <option key={c} value={c}>{c} or better</option>)}
+                </select>
+              </Field>
               <Field label="Then sort by">
                 <select value={sortKey2} onChange={(e) => setSortKey2(e.target.value)} style={inputStyle}>
                   <option value="">Nothing further</option>
