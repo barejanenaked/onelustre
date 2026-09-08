@@ -2596,11 +2596,19 @@ export default function OneLustre() {
                 <div className="mt-3">
                   {Array.from(new Set(Array.from(doubleQuoted.values()).map((v) => v.report))).map((rep2) => {
                     const holders = items.filter((i) => i.stones.some((x) => (x.certNo || "").trim() === rep2));
+                    const matchStone = holders[0]?.stones.find((x) => (x.certNo || "").trim() === rep2);
+                    const carat = matchStone ? (parseFloat(matchStone.carat) || 0).toFixed(2) : "";
                     return (
                       <div key={rep2} className="py-2" style={{ fontFamily: MONT, fontSize: 13, color: T.ink60, lineHeight: 1.7 }}>
-                        <span style={{ color: T.ink, fontWeight: 500 }}>GIA {rep2}</span>
+                        <span style={{ color: T.ink, fontWeight: 500 }}>GIA {rep2}{carat && ` · ${carat} ct`}</span>
                         {" — "}
-                        {holders.map((h) => `${h.supplier}${h.priceTbc ? " (no price yet)" : ` at ${money(h.cost, h.costCurrency || "USD")}`}`).join("  ·  ")}
+                        {holders.map((h) => {
+                          if (h.priceTbc) return `${h.supplier} (no price yet)`;
+                          const price = money(h.cost, h.costCurrency || "USD");
+                          return h.kind === "pair"
+                            ? `${h.supplier} at ${price} for the pair (÷2 to compare against a single stone)`
+                            : `${h.supplier} at ${price}`;
+                        }).join("  ·  ")}
                       </div>
                     );
                   })}
