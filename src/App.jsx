@@ -2039,6 +2039,7 @@ export default function OneLustre() {
   const [cutMin, setCutMin] = useState("All");
   const [polishMin, setPolishMin] = useState("All");
   const [symmetryMin, setSymmetryMin] = useState("All");
+  const [fluorMin, setFluorMin] = useState("All");
   const [selected, setSelected] = useState(null);
   const [draft, setDraft] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -2288,6 +2289,7 @@ export default function OneLustre() {
       if (cutMin !== "All" && worstRank(it, CUT_SCALE, "cut") > CUT_SCALE.indexOf(cutMin)) return false;
       if (polishMin !== "All" && worstRank(it, CUT_SCALE, "polish") > CUT_SCALE.indexOf(polishMin)) return false;
       if (symmetryMin !== "All" && worstRank(it, CUT_SCALE, "symmetry") > CUT_SCALE.indexOf(symmetryMin)) return false;
+      if (fluorMin !== "All" && worstRank(it, FLUOR_SCALE, "fluorescence") > FLUOR_SCALE.indexOf(fluorMin)) return false;
       if (!q) return true;
       const hay = [
         it.shape, it.category, it.origin, it.status,
@@ -2297,7 +2299,7 @@ export default function OneLustre() {
       return hay.includes(q);
     });
   }, [items, query, filter, countryFilter, supplierFilter, admin, client,
-      caratMin, caratMax, colourMin, clarityMin, cutMin, polishMin, symmetryMin]);
+      caratMin, caratMax, colourMin, clarityMin, cutMin, polishMin, symmetryMin, fluorMin]);
 
   const ordered = useMemo(
     () => sortItems(visible, [sortKey, sortKey2].filter(Boolean), settings),
@@ -2333,12 +2335,13 @@ export default function OneLustre() {
     (admin && supplierFilter !== "All" ? 1 : 0) + (sortKey2 ? 1 : 0) +
     (caratMin ? 1 : 0) + (caratMax ? 1 : 0) +
     (colourMin !== "All" ? 1 : 0) + (clarityMin !== "All" ? 1 : 0) +
-    (cutMin !== "All" ? 1 : 0) + (polishMin !== "All" ? 1 : 0) + (symmetryMin !== "All" ? 1 : 0);
+    (cutMin !== "All" ? 1 : 0) + (polishMin !== "All" ? 1 : 0) + (symmetryMin !== "All" ? 1 : 0) +
+    (fluorMin !== "All" ? 1 : 0);
 
   const clearFilters = () => {
     setFilter("All"); setCountryFilter("All"); setSupplierFilter("All"); setSortKey2("");
     setCaratMin(""); setCaratMax(""); setColourMin("All"); setClarityMin("All");
-    setCutMin("All"); setPolishMin("All"); setSymmetryMin("All");
+    setCutMin("All"); setPolishMin("All"); setSymmetryMin("All"); setFluorMin("All");
   };
 
   const chips = [
@@ -2352,6 +2355,7 @@ export default function OneLustre() {
     cutMin !== "All" && { label: `${cutMin} cut or better`, clear: () => setCutMin("All") },
     polishMin !== "All" && { label: `${polishMin} polish or better`, clear: () => setPolishMin("All") },
     symmetryMin !== "All" && { label: `${symmetryMin} symmetry or better`, clear: () => setSymmetryMin("All") },
+    fluorMin !== "All" && { label: `${fluorMin} fluorescence or better`, clear: () => setFluorMin("All") },
     sortKey2 && { label: `Then by ${SORTS[sortKey2].toLowerCase()}`, clear: () => setSortKey2("") },
   ].filter(Boolean);
 
@@ -2913,6 +2917,12 @@ export default function OneLustre() {
                 <select value={symmetryMin} onChange={(e) => setSymmetryMin(e.target.value)} style={inputStyle}>
                   <option value="All">Any</option>
                   {CUT_SCALE.map((c) => <option key={c} value={c}>{c} or better</option>)}
+                </select>
+              </Field>
+              <Field label="Fluorescence">
+                <select value={fluorMin} onChange={(e) => setFluorMin(e.target.value)} style={inputStyle}>
+                  <option value="All">Any</option>
+                  {FLUOR_SCALE.map((c) => <option key={c} value={c}>{c} or better</option>)}
                 </select>
               </Field>
               <Field label="Then sort by">
