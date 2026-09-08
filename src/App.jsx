@@ -2010,6 +2010,8 @@ export default function OneLustre() {
   const [settings, setSettings] = useState(defaultSettings);
   const [enquiries, setEnquiries] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [retryTick, setRetryTick] = useState(0);
   const [err, setErr] = useState("");
   const [session] = useState(readSession);
   const [view, setView] = useState(session?.view || "client");
@@ -2063,9 +2065,22 @@ export default function OneLustre() {
   };
 
   useEffect(() => {
+    let cancelled = false;
+    let timeoutId;
     (async () => {
+      setLoadError(false);
       try {
-        const res = await window.storage.get(KEY);
+        const res = await Promise.race([
+          window.storage.get(KEY),
+          new Promise((_, reject) => {
+            /* A flaky connection can leave the request neither resolved nor
+               rejected. Without this, the book would wait on it forever
+               instead of telling you it couldn't load. */
+            timeoutId = setTimeout(() => reject(new Error("TIMEOUT")), 15000);
+          }),
+        ]);
+        clearTimeout(timeoutId);
+        if (cancelled) return;
         const parsed = JSON.parse(res.value);
         let its = parsed.items || [];
         let eqs = parsed.enquiries || [];
@@ -2149,16 +2164,32 @@ export default function OneLustre() {
         setItems(its);
         setSettings(st);
         setEnquiries(eqs);
-      } catch {
-        const s = seed();
-        setItems(s);
-        setSettings(defaultSettings);
-        setEnquiries([]);
-        try { await window.storage.set(KEY, JSON.stringify({ items: s, settings: defaultSettings, enquiries: [], seedVersion: SEED_VERSION })); } catch {}
+      } catch (e) {
+        clearTimeout(timeoutId);
+        if (cancelled) return;
+        if (String(e?.message || "").startsWith("No value stored")) {
+          /* Nothing has ever been saved for this book yet — a genuine
+             first run, not a network problem. Bootstrap it with the
+             reference data. */
+          const s = seed();
+          setItems(s);
+          setSettings(defaultSettings);
+          setEnquiries([]);
+          try { await window.storage.set(KEY, JSON.stringify({ items: s, settings: defaultSettings, enquiries: [], seedVersion: SEED_VERSION })); } catch {}
+        } else {
+          /* A timeout or a real network/database error. The book almost
+             certainly still has real data in it — never overwrite that
+             with the seed just because this one load failed. Show a
+             retry instead. */
+          setLoading(false);
+          setLoadError(true);
+          return;
+        }
       }
-      setLoading(false);
+      if (!cancelled) setLoading(false);
     })();
-  }, []);
+    return () => { cancelled = true; clearTimeout(timeoutId); };
+  }, [retryTick]);
 
   const saveTimer = useRef(null);
   const persist = useCallback((nextItems, nextSettings, now = false, nextEnquiries) => {
@@ -2386,6 +2417,28 @@ export default function OneLustre() {
       <div className="min-h-screen flex items-center justify-center" style={{ background: T.wine }}>
         <style>{FONTS}</style>
         <div style={{ fontFamily: SERIF, fontSize: 20, fontStyle: "italic", color: T.onWine60 }}>Opening the book…</div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6" style={{ background: T.wine }}>
+        <style>{FONTS}</style>
+        <div className="text-center" style={{ maxWidth: 340 }}>
+          <div style={{ fontFamily: SERIF, fontSize: 20, fontStyle: "italic", color: T.onWine60 }}>
+            The book couldn't be reached.
+          </div>
+          <div style={{ fontFamily: TEXT, fontSize: 13, color: T.onWine60, marginTop: 10, lineHeight: 1.6 }}>
+            Check your connection and try again — nothing has been changed.
+          </div>
+          <button onClick={() => { setLoading(true); setRetryTick((n) => n + 1); }} style={{
+            marginTop: 20, fontFamily: TEXT, fontSize: 11, letterSpacing: "0.28em",
+            textTransform: "uppercase", padding: "13px 28px", background: T.gold, color: T.ink,
+          }}>
+            Try again
+          </button>
+        </div>
       </div>
     );
   }
