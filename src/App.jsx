@@ -411,9 +411,20 @@ const convert = (usd, code, st) => (code === "USD" ? usd : usd * (st.rates[code]
    printed on the sheet, so this is the only place the ×100 happens. */
 const rapValue = (s) => (parseFloat(s.rapPerCt) || 0) * 100 * (parseFloat(s.carat) || 0);
 const totalRapValue = (it) => it.stones.reduce((a, s) => a + rapValue(s), 0);
+/* The Rapaport sheet prices to GIA grading standards, so a stone graded
+   anywhere else (or ungraded) has nothing meaningful to compare against —
+   Jann Paul's own grading, for one. The whole item has to qualify, not just
+   one stone: a pair is bought as one package price, so comparing that price
+   against the Rap value of only its GIA half would read as a huge fake
+   premium. */
+const rapGradable = (it) =>
+  (it.stones || []).length > 0 && it.stones.every((s) => s.cert === "GIA" && s.certNo);
+const rapComparable = (it) =>
+  rapGradable(it) && it.stones.every((s) => parseFloat(s.rapPerCt) > 0);
 /* Positive = bought under Rap (the usual, desirable case); negative = paid over Rap.
-   null when no Rap figure has been entered for any stone in the item yet. */
+   null when the item has no Rap figure yet, or isn't comparable at all. */
 const offRapPct = (it, st) => {
+  if (!rapComparable(it)) return null;
   const rap = totalRapValue(it);
   if (!rap) return null;
   return ((rap - costUSD(it, st)) / rap) * 100;
@@ -1318,6 +1329,11 @@ function Editor({ draft, setDraft, clients, onSave, onClose }) {
                 <Field label="Fluorescence"><SelectInput value={s.fluorescence} onChange={(e) => setStone(i, "fluorescence", e.target.value)} options={FLUOR_SCALE} /></Field>
                 <Field label="Rap $/ct (00s)">
                   <TextInput type="number" step="1" value={s.rapPerCt || ""} onChange={(e) => setStone(i, "rapPerCt", e.target.value)} placeholder="e.g. 335" />
+                  {!(s.cert === "GIA" && s.certNo) && (
+                    <div style={{ marginTop: 4, fontFamily: TEXT, fontSize: 11, color: T.ink30 }}>
+                      Rapaport prices to GIA grading — no comparison is shown for this stone.
+                    </div>
+                  )}
                 </Field>
                 <Field label="Measurements"><TextInput value={s.measurements} onChange={(e) => setStone(i, "measurements", e.target.value)} placeholder="10.80 – 10.88 × 6.82 mm" /></Field>
                 <Field label="Table %"><TextInput type="number" step="0.1" value={s.table ?? ""} onChange={(e) => setStone(i, "table", e.target.value)} placeholder="57" /></Field>
@@ -2529,7 +2545,7 @@ export default function OneLustre() {
       const rapPct = offRapPct(it, settings);
       return [
         it.id, it.kind, it.category, it.origin, it.shape, s.carat, s.colour, s.clarity, s.cut, s.polish,
-        s.symmetry, s.fluorescence, s.rapPerCt, s.measurements, s.cert, s.certNo, s.inscription,
+        s.symmetry, s.fluorescence, rapGradable(it) ? s.rapPerCt : "", s.measurements, s.cert, s.certNo, s.inscription,
         it.supplier, it.supplierLocation, it.supplierCountry,
         i === 0 ? it.cost : "", i === 0 ? (it.costCurrency || "USD") : "",
         i === 0 && !it.priceTbc ? Math.round(costUSD(it, settings)) : "",
@@ -3184,7 +3200,7 @@ export default function OneLustre() {
                         {!pricesVisible ? <Hidden /> : it.priceTbc ? "—" : money(costUSD(it, settings) / (totalCarat(it) || 1), "USD")}
                       </td>
                       <td className="px-3 py-3" style={{ fontFamily: TEXT, fontSize: 12, color: T.ink60, whiteSpace: "nowrap" }}>
-                        {it.stones.some((x) => x.rapPerCt) ? it.stones.map((x) => x.rapPerCt || "—").join(" / ") : "—"}
+                        {rapGradable(it) && it.stones.some((x) => x.rapPerCt) ? it.stones.map((x) => x.rapPerCt || "—").join(" / ") : "—"}
                       </td>
                       <td className="px-3 py-3" style={{ fontFamily: TEXT, fontSize: 12, whiteSpace: "nowrap" }}>
                         {!pricesVisible || it.priceTbc || offRapPct(it, settings) === null ? "—" : (
