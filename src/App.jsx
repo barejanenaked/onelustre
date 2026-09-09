@@ -2782,7 +2782,12 @@ export default function OneLustre() {
                     const carat = matchStone ? (parseFloat(matchStone.carat) || 0).toFixed(2) : "";
                     return (
                       <div key={rep2} className="py-2" style={{ fontFamily: MONT, fontSize: 13, color: T.ink60, lineHeight: 1.7 }}>
-                        <span style={{ color: T.ink, fontWeight: 500 }}>GIA {rep2}{carat && ` · ${carat} ct`}</span>
+                        <button
+                          onClick={() => { clearFilters(); setQuery(rep2); }}
+                          title="Show only this stone's listings"
+                          style={{ color: T.ink, fontWeight: 500, textDecoration: "underline", textDecorationColor: T.gold, textUnderlineOffset: 3 }}>
+                          GIA {rep2}{carat && ` · ${carat} ct`}
+                        </button>
                         {" — "}
                         {holders.map((h) => {
                           if (h.priceTbc) return `${h.supplier} (no price yet)`;
