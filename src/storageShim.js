@@ -24,7 +24,7 @@ const storageShim = {
   async get(key, shared = false) {
     const { data, error } = await supabase
       .from(TABLE)
-      .select("value")
+      .select("value, updated_at")
       .eq("key", key)
       .eq("shared", shared)
       .maybeSingle();
@@ -35,18 +35,50 @@ const storageShim = {
       // already expects and catches.
       throw new Error(`No value stored for "${key}"`);
     }
-    return { key, value: data.value, shared };
+    return { key, value: data.value, shared, updatedAt: data.updated_at };
   },
 
-  async set(key, value, shared = false) {
-    const { error } = await supabase
+  /**
+   * `expectedUpdatedAt`, when passed, turns this into a compare-and-swap:
+   * the write only lands if the row's `updated_at` still matches what this
+   * caller last read. Two tabs (or a live session and a direct database
+   * edit) can otherwise both load the same book, and the second blind
+   * write silently erases whatever the first one added — which is exactly
+   * the class of bug the "additive-only migration" rule in CLAUDE.md
+   * exists to prevent for code-driven changes, and this closes the same
+   * hole for live edits. Callers that don't pass it get the old
+   * last-write-wins behaviour (used only for first-ever bootstrap, where
+   * there's nothing to conflict with yet).
+   */
+  async set(key, value, shared = false, expectedUpdatedAt) {
+    const now = new Date().toISOString();
+    if (expectedUpdatedAt) {
+      const { data, error } = await supabase
+        .from(TABLE)
+        .update({ value, updated_at: now })
+        .eq("key", key)
+        .eq("shared", shared)
+        .eq("updated_at", expectedUpdatedAt)
+        .select("updated_at");
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        const conflict = new Error(
+          "The book changed elsewhere since this device last loaded it."
+        );
+        conflict.conflict = true;
+        throw conflict;
+      }
+      return { key, value, shared, updatedAt: data[0].updated_at };
+    }
+    const { data, error } = await supabase
       .from(TABLE)
       .upsert(
-        { key, shared, value, updated_at: new Date().toISOString() },
+        { key, shared, value, updated_at: now },
         { onConflict: "key,shared" }
-      );
+      )
+      .select("updated_at");
     if (error) throw error;
-    return { key, value, shared };
+    return { key, value, shared, updatedAt: data?.[0]?.updated_at ?? now };
   },
 
   async delete(key, shared = false) {

@@ -2144,6 +2144,7 @@ export default function OneLustre() {
     } catch { /* the copy box is the fallback */ }
   };
 
+  const bookVersion = useRef(null);
   useEffect(() => {
     let cancelled = false;
     let timeoutId;
@@ -2161,6 +2162,7 @@ export default function OneLustre() {
         ]);
         clearTimeout(timeoutId);
         if (cancelled) return;
+        bookVersion.current = res.updatedAt || null;
         const parsed = JSON.parse(res.value);
         let its = parsed.items || [];
         let eqs = parsed.enquiries || [];
@@ -2239,7 +2241,21 @@ export default function OneLustre() {
               (x.name || "").trim().toLowerCase() === sup.name.toLowerCase())) st.suppliers.push(sup);
           });
           delete st.brief; delete st.clientPin; delete st.localCode;
-          try { await window.storage.set(KEY, JSON.stringify({ items: its, settings: st, enquiries: eqs, seedVersion: SEED_VERSION })); } catch {}
+          try {
+            const r = await window.storage.set(
+              KEY,
+              JSON.stringify({ items: its, settings: st, enquiries: eqs, seedVersion: SEED_VERSION }),
+              false,
+              bookVersion.current
+            );
+            bookVersion.current = r.updatedAt;
+          } catch {
+            /* Someone else wrote in the instant between our read and this
+               migration write — a vanishingly small window. Leave
+               bookVersion.current at the value we read, so the next real
+               save from this tab still conflict-checks correctly rather
+               than silently overwriting whatever just landed. */
+          }
         }
         setItems(its);
         setSettings(st);
@@ -2255,7 +2271,10 @@ export default function OneLustre() {
           setItems(s);
           setSettings(defaultSettings);
           setEnquiries([]);
-          try { await window.storage.set(KEY, JSON.stringify({ items: s, settings: defaultSettings, enquiries: [], seedVersion: SEED_VERSION })); } catch {}
+          try {
+            const r = await window.storage.set(KEY, JSON.stringify({ items: s, settings: defaultSettings, enquiries: [], seedVersion: SEED_VERSION }));
+            bookVersion.current = r.updatedAt;
+          } catch {}
         } else {
           /* A timeout or a real network/database error. The book almost
              certainly still has real data in it — never overwrite that
@@ -2280,9 +2299,20 @@ export default function OneLustre() {
           items: nextItems, settings: nextSettings,
           enquiries: nextEnquiries !== undefined ? nextEnquiries : lastWrite.current?.q ?? [],
           seedVersion: SEED_VERSION,
-        }));
-        setErr(r ? "" : "Changes could not be saved. Try again.");
-      } catch { setErr("Changes could not be saved. Try again."); }
+        }), false, bookVersion.current);
+        bookVersion.current = r.updatedAt;
+        setErr("");
+      } catch (e) {
+        if (e?.conflict) {
+          /* Someone else — another tab, another device, a direct edit —
+             saved since this tab last loaded the book. Writing over that
+             blind would silently erase it. This change stays only in this
+             tab's memory; reloading picks up the latest book instead. */
+          setErr("This book was just updated elsewhere. Your last change wasn't saved — reload the page to see the latest, then redo it.");
+        } else {
+          setErr("Changes could not be saved. Try again.");
+        }
+      }
     };
     if (now) write();
     else saveTimer.current = setTimeout(write, 450);
@@ -2294,7 +2324,7 @@ export default function OneLustre() {
       if (!lastWrite.current) return;
       if (saveTimer.current) clearTimeout(saveTimer.current);
       const { i, s, q } = lastWrite.current;
-      try { window.storage.set(KEY, JSON.stringify({ items: i, settings: s, enquiries: q || [], seedVersion: SEED_VERSION })); } catch {}
+      try { window.storage.set(KEY, JSON.stringify({ items: i, settings: s, enquiries: q || [], seedVersion: SEED_VERSION }), false, bookVersion.current); } catch {}
     };
     const onHide = () => { if (document.visibilityState === "hidden") flush(); };
     document.addEventListener("visibilitychange", onHide);
