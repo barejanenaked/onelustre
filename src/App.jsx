@@ -1885,7 +1885,7 @@ function SupplierDesk({ supplier, items, settings, onSave, onSaveProfile, onLock
     <div className="min-h-screen" style={{ background: `linear-gradient(${T.wine} 0%, ${T.wineDeep} 100%)`, fontFamily: TEXT, color: T.ink }}>
       <style>{FONTS}</style>
       <header style={{ background: T.wineDeep, borderBottom: `1px solid ${T.wineEdge}` }}>
-        <div className="mx-auto px-5 sm:px-8 py-4 flex items-center justify-between" style={{ maxWidth: 1100 }}>
+        <div className="mx-auto px-5 sm:px-8 py-4 flex flex-wrap items-center justify-between" style={{ maxWidth: 1100, gap: 12 }}>
           <div className="flex items-center" style={{ gap: 13 }}>
             <Brilliant size={30} stroke={T.gold} width={1.1} />
             <div>
@@ -2914,7 +2914,9 @@ export default function OneLustre() {
       <style>{FONTS}</style>
 
       <header style={{ background: T.wineDeep, borderBottom: `1px solid ${T.wineEdge}` }}>
-        <div className="mx-auto px-5 sm:px-8 py-4 flex items-center justify-between" style={{ maxWidth: 1280 }}>
+        {/* Wraps rather than runs off the side: the trade toolbar is wider
+            than an iPad once every button is in it. */}
+        <div className="mx-auto px-5 sm:px-8 py-4 flex flex-wrap items-center justify-between" style={{ maxWidth: 1280, gap: 12 }}>
           <div className="flex items-center" style={{ gap: 13 }}>
             <Brilliant size={32} stroke={T.gold} width={1.1} />
             <div>
@@ -2926,10 +2928,10 @@ export default function OneLustre() {
               </div>
             </div>
           </div>
-          <div className="flex items-center" style={{ gap: 8 }}>
+          <div className="flex flex-wrap items-center justify-end" style={{ gap: 6 }}>
             <span className="hidden sm:inline-block" style={{
               fontFamily: MONT, fontSize: 9, fontWeight: 500, letterSpacing: "0.26em", textTransform: "uppercase",
-              color: T.onWine60, border: `1px solid ${T.wineEdge}`, padding: "6px 11px", marginRight: 4 }}>
+              color: T.onWine60, border: `1px solid ${T.wineEdge}`, padding: "6px 11px" }}>
               {admin ? "Trade" : client ? client.name : "Client"}
             </span>
             {admin && (
@@ -2948,7 +2950,8 @@ export default function OneLustre() {
                 </Button>
                 <div className="hidden sm:block"><Button onClick={() => setShowSettings(true)}><SettingsIcon size={13} /> Settings</Button></div>
                 <div className="hidden sm:block"><Button onClick={exportCsv}><Download size={13} /> CSV</Button></div>
-                <div className="hidden sm:block"><Button onClick={() => { setImportOpen(true); setPlan(null); }}><Upload size={13} /> Import margins</Button></div>
+                <div className="hidden sm:block"><Button onClick={() => { setImportOpen(true); setPlan(null); }}
+                  title="Update margins from a spreadsheet — nothing else in the file is read"><Upload size={13} /> Import</Button></div>
                 <Button variant="solid" onClick={openNew}><Plus size={13} /> Add</Button>
               </>
             )}
