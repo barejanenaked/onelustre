@@ -12,3 +12,19 @@
   from = "/*"
   to = "/index.html"
   status = 200
+
+# The page itself must never be served from a stale cache: it is the file
+# that points at the current build, so an old copy pins the whole app to
+# an old version. An iPad that has held the book open for days is exactly
+# where that bites.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+# The build's own files carry a content hash in their name, so a changed
+# file is a new name — they can be kept for good.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
