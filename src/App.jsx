@@ -164,6 +164,191 @@ const applyOutbox = (list, items, settings) => {
   return { items: its, settings: st };
 };
 
+/* Reading a book back in from a spreadsheet.
+
+   The export writes one row per stone, so rows are grouped back together
+   by Ref and matched against stones in order. Columns are found by name,
+   not position, so a column deleted or moved in Numbers still imports.
+
+   Two rules keep this from being the most destructive button in the app:
+
+   - A blank cell means "leave this alone", never "erase this". The export
+     itself writes blanks all over the place — the Rap figure on a non-GIA
+     stone, every item-level column on the second row of a pair — so if
+     blank meant erase, exporting and re-importing untouched would gut the
+     book.
+   - Only what the sheet actually carries can change. Photographs, films,
+     which clients may see a stone, notes and trade notes aren't in the
+     export at all, so they're carried over untouched rather than lost.
+     A Ref the book doesn't have is reported, not created; a stone absent
+     from the sheet is left alone, never deleted.
+
+   Sell, Profit, Net margin, Cost USD and % off Rap are worked out from the
+   other figures, so they're ignored on the way in — the figures they come
+   from (Quoted, Currency, Margin, Discount) are what count. */
+const CSV_ITEM_COLS = {
+  kind: "Kind", category: "Category", origin: "Origin", shape: "Shape",
+  supplier: "Supplier", supplierLocation: "Location", supplierCountry: "Country",
+  cost: "Quoted", costCurrency: "Currency", discount: "Discount %", status: "Status",
+};
+const CSV_STONE_COLS = {
+  carat: "Carat", colour: "Colour", clarity: "Clarity", cut: "Cut", polish: "Polish",
+  symmetry: "Symmetry", fluorescence: "Fluorescence", rapPerCt: "Rap $/ct",
+  measurements: "Measurements", cert: "Lab", certNo: "Report", inscription: "Inscription",
+};
+const CSV_NUMERIC = new Set(["cost", "discount", "carat"]);
+
+export const parseCsv = (text) => {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  const src = String(text || "").replace(/^﻿/, "");
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (quoted) {
+      if (c === '"') {
+        if (src[i + 1] === '"') { cell += '"'; i++; }
+        else quoted = false;
+      } else cell += c;
+      continue;
+    }
+    if (c === '"') { quoted = true; continue; }
+    if (c === ",") { row.push(cell); cell = ""; continue; }
+    if (c === "\r") continue;
+    if (c === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; continue; }
+    cell += c;
+  }
+  if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter((r) => r.some((v) => String(v).trim() !== ""));
+};
+
+export const planCsvImport = (text, items, settings) => {
+  const rows = parseCsv(text);
+  if (rows.length < 2) return { error: "That file has no rows in it." };
+  const head = rows[0].map((h) => String(h).trim().toLowerCase());
+  const col = (name) => head.indexOf(name.toLowerCase());
+  if (col("Ref") === -1) {
+    return { error: 'That file has no "Ref" column, so there is no way to tell which stone each row belongs to. Export your book first and edit that file.' };
+  }
+  const cell = (r, name) => {
+    const i = col(name);
+    return i === -1 ? "" : String(r[i] ?? "").trim();
+  };
+
+  /* Group the rows back into listings, in the order the sheet has them. */
+  const byRef = new Map();
+  const unknown = [];
+  rows.slice(1).forEach((r) => {
+    const ref = cell(r, "Ref");
+    if (!ref) return;
+    if (!byRef.has(ref)) byRef.set(ref, []);
+    byRef.get(ref).push(r);
+  });
+
+  const changes = [];
+  const warnings = [];
+  const currencies = ["USD", ...Object.keys(settings.rates || {})];
+  const houseMargin = settings.margin;
+
+  const nextItems = items.map((it) => {
+    const group = byRef.get(it.id);
+    if (!group) return it;
+    const next = { ...it };
+    const first = group[0];
+    const note = (label, from, to) => changes.push({ ref: it.id, label, from, to });
+
+    Object.entries(CSV_ITEM_COLS).forEach(([field, label]) => {
+      const raw = cell(first, label);
+      if (raw === "") return;
+      let val = raw;
+      if (CSV_NUMERIC.has(field)) {
+        const n = parseFloat(raw.replace(/[,\s]/g, ""));
+        if (!isFinite(n)) { warnings.push(`${it.id}: "${raw}" is not a number for ${label} — left as it was.`); return; }
+        val = n;
+      }
+      if (field === "kind" && !["single", "pair", "half"].includes(val)) {
+        warnings.push(`${it.id}: "${raw}" is not a kind of listing — left as it was.`); return;
+      }
+      if (field === "status" && !STATUSES.includes(val)) {
+        warnings.push(`${it.id}: "${raw}" is not a status — left as it was.`); return;
+      }
+      if (field === "costCurrency" && !currencies.includes(val)) {
+        warnings.push(`${it.id}: "${raw}" is not a currency the book knows — left as it was.`); return;
+      }
+      const was = next[field] ?? (field === "discount" ? 0 : "");
+      if (String(was) !== String(val)) { note(label, was === "" ? "—" : was, val); next[field] = val; }
+    });
+
+    /* Margin exports as the figure actually in force, so a stone on the
+       house rate exports that rate. Comparing like for like keeps a plain
+       round trip from turning every stone into its own override. */
+    const rawMargin = cell(first, "Margin %");
+    if (rawMargin !== "") {
+      const n = parseFloat(rawMargin.replace(/[,\s%]/g, ""));
+      if (!isFinite(n)) warnings.push(`${it.id}: "${rawMargin}" is not a number for Margin % — left as it was.`);
+      else if (n !== (it.margin ?? houseMargin)) {
+        note("Margin %", it.margin ?? houseMargin, n);
+        next.margin = n;
+      }
+    }
+
+    const rawPrice = cell(first, "Price");
+    if (rawPrice !== "") {
+      const p = rawPrice.toLowerCase();
+      const map = {
+        "awaiting quote": { priceTbc: true, indicative: false },
+        indicative: { priceTbc: false, indicative: true },
+        firm: { priceTbc: false, indicative: false },
+      };
+      if (!map[p]) warnings.push(`${it.id}: "${rawPrice}" should be Firm, Indicative or Awaiting quote — left as it was.`);
+      else {
+        const was = it.priceTbc ? "Awaiting quote" : it.indicative ? "Indicative" : "Firm";
+        const to = rawPrice.charAt(0).toUpperCase() + rawPrice.slice(1).toLowerCase();
+        if (was.toLowerCase() !== p) { note("Price", was, to); Object.assign(next, map[p]); }
+      }
+    }
+
+    /* Stones line up with rows in order. Extra rows can't add a stone and
+       missing rows can't remove one — both are reported instead. */
+    if (group.length > it.stones.length) {
+      warnings.push(`${it.id}: the sheet has ${group.length} rows but this listing has ${it.stones.length} — the extra rows were ignored.`);
+    }
+    next.stones = it.stones.map((s, i) => {
+      const r = group[i];
+      if (!r) return s;
+      const ns = { ...s };
+      Object.entries(CSV_STONE_COLS).forEach(([field, label]) => {
+        const raw = cell(r, label);
+        if (raw === "") return;
+        let val = raw;
+        if (CSV_NUMERIC.has(field)) {
+          const n = parseFloat(raw.replace(/[,\s]/g, ""));
+          if (!isFinite(n)) { warnings.push(`${it.id}: "${raw}" is not a number for ${label} — left as it was.`); return; }
+          val = n;
+        }
+        const was = s[field] ?? "";
+        if (String(was) !== String(val)) {
+          note(it.stones.length > 1 ? `${label} (stone ${i + 1})` : label, was === "" ? "—" : was, val);
+          ns[field] = val;
+        }
+      });
+      return ns;
+    });
+    return next;
+  });
+
+  const have = new Set(items.map((i) => i.id));
+  byRef.forEach((_, ref) => { if (!have.has(ref)) unknown.push(ref); });
+  const touched = new Set(changes.map((c) => c.ref));
+
+  return {
+    nextItems, changes, warnings, unknown,
+    listings: touched.size,
+    absent: items.filter((i) => !byRef.has(i.id)).length,
+  };
+};
+
 const fluorFlag = (v = "") => {
   const t = String(v);
   if (/yellow/i.test(t)) return `${t} fluorescence`;
@@ -2185,6 +2370,10 @@ export default function OneLustre() {
   const [pinReveal, setPinReveal] = useState(false);
   const [saved, setSaved] = useState("");
   const [csv, setCsv] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
+  const [plan, setPlan] = useState(null);
+  const [planBusy, setPlanBusy] = useState(false);
+  const importFileRef = useRef(null);
   const [certView, setCertView] = useState(null);
   const [copied, setCopied] = useState(false);
   const csvRef = useRef(null);
@@ -2713,6 +2902,26 @@ export default function OneLustre() {
     setCsv([head.join(","), ...rows].join("\n"));
   };
 
+  const readImport = async (file) => {
+    if (!file) return;
+    setPlanBusy(true);
+    try {
+      const text = await file.text();
+      setPlan(planCsvImport(text, items, settings));
+    } catch {
+      setPlan({ error: "That file couldn't be read. Export your book, edit that file, and import it back." });
+    }
+    setPlanBusy(false);
+  };
+
+  const applyImport = () => {
+    if (!plan?.changes?.length) return;
+    commit(plan.nextItems, settings, true);
+    setSaved(`${plan.changes.length} change${plan.changes.length === 1 ? "" : "s"} brought in from the spreadsheet.`);
+    setTimeout(() => setSaved(""), 4000);
+    setImportOpen(false); setPlan(null);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: T.wine }}>
@@ -2832,6 +3041,7 @@ export default function OneLustre() {
                 </Button>
                 <div className="hidden sm:block"><Button onClick={() => setShowSettings(true)}><SettingsIcon size={13} /> Settings</Button></div>
                 <div className="hidden sm:block"><Button onClick={exportCsv}><Download size={13} /> CSV</Button></div>
+                <div className="hidden sm:block"><Button onClick={() => { setImportOpen(true); setPlan(null); }}><Upload size={13} /> Import</Button></div>
                 <Button variant="solid" onClick={openNew}><Plus size={13} /> Add</Button>
               </>
             )}
@@ -3511,6 +3721,92 @@ export default function OneLustre() {
             <div className="flex flex-wrap justify-end px-6 py-4" style={{ gap: 10, borderTop: `1px solid ${T.rule}` }}>
               <Button onClick={downloadCsv}><Download size={13} /> Try a download</Button>
               <Button variant="gold" onClick={copyCsv}><Check size={13} /> {copied ? "Copied" : "Copy everything"}</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {importOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(30,4,10,0.75)" }}
+          onClick={() => { setImportOpen(false); setPlan(null); }}>
+          <div onClick={(e) => e.stopPropagation()} className="w-full" style={{ background: T.paper, maxWidth: 720, color: T.ink, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
+            <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: `1px solid ${T.gold}` }}>
+              <div style={{ fontFamily: MONT, fontSize: 12, fontWeight: 500, letterSpacing: "0.22em", textTransform: "uppercase" }}>
+                Update the book from a spreadsheet
+              </div>
+              <button onClick={() => { setImportOpen(false); setPlan(null); }} style={{ color: T.ink30 }} aria-label="Close"><X size={20} /></button>
+            </div>
+
+            <div className="px-6 py-4" style={{ overflowY: "auto" }}>
+              <div style={{ fontFamily: MONT, fontSize: 12, color: T.ink60, lineHeight: 1.7 }}>
+                Export your book, edit it in Numbers or Excel, then bring it back here. Stones are
+                matched by their <strong>Ref</strong>, so keep that column. Nothing is saved until you
+                see the list of changes and agree to it.
+              </div>
+              <div style={{ fontFamily: TEXT, fontSize: 12, color: T.ink30, lineHeight: 1.7, marginTop: 10 }}>
+                An empty cell leaves that figure alone rather than clearing it. Photographs, films,
+                notes and who can see a stone aren't in the spreadsheet, so they're never touched. A
+                stone missing from the file stays in the book, and a Ref the book doesn't have is
+                listed rather than added.
+              </div>
+
+              <input ref={importFileRef} type="file" accept=".csv,text/csv,text/plain" style={{ display: "none" }}
+                onChange={(e) => { readImport(e.target.files?.[0]); e.target.value = ""; }} />
+              <div style={{ marginTop: 16 }}>
+                <Button variant="gold" onClick={() => importFileRef.current?.click()} disabled={planBusy}>
+                  {planBusy ? <Loader2 size={13} /> : <Upload size={13} />} {planBusy ? "Reading…" : "Choose a CSV file"}
+                </Button>
+              </div>
+
+              {plan?.error && (
+                <div style={{ fontFamily: TEXT, fontSize: 13, color: T.rust, marginTop: 16, lineHeight: 1.6 }}>
+                  {plan.error}
+                </div>
+              )}
+
+              {plan && !plan.error && (
+                <div style={{ marginTop: 18 }}>
+                  <div style={{ fontFamily: MONT, fontSize: 12, fontWeight: 500, color: T.ink, lineHeight: 1.7 }}>
+                    {plan.changes.length === 0
+                      ? "Nothing in that file is different from the book."
+                      : `${plan.changes.length} change${plan.changes.length === 1 ? "" : "s"} across ${plan.listings} listing${plan.listings === 1 ? "" : "s"}.`}
+                  </div>
+                  {(plan.absent > 0 || plan.unknown.length > 0) && (
+                    <div style={{ fontFamily: TEXT, fontSize: 12, color: T.ink30, marginTop: 6, lineHeight: 1.6 }}>
+                      {plan.absent > 0 && `${plan.absent} listing${plan.absent === 1 ? "" : "s"} in the book ${plan.absent === 1 ? "isn't" : "aren't"} in the file — left untouched. `}
+                      {plan.unknown.length > 0 && `Not in the book, so skipped: ${plan.unknown.join(", ")}.`}
+                    </div>
+                  )}
+                  {plan.warnings.length > 0 && (
+                    <div style={{ marginTop: 10 }}>
+                      {plan.warnings.map((w, i) => (
+                        <div key={i} style={{ fontFamily: TEXT, fontSize: 12, color: T.amber, lineHeight: 1.6 }}>{w}</div>
+                      ))}
+                    </div>
+                  )}
+                  {plan.changes.length > 0 && (
+                    <div style={{ marginTop: 12, border: `1px solid ${T.rule}`, maxHeight: 260, overflowY: "auto" }}>
+                      {plan.changes.map((c, i) => (
+                        <div key={i} className="flex flex-wrap items-baseline px-3 py-2"
+                          style={{ gap: 8, borderTop: i ? `1px solid ${T.rule}` : "none", fontFamily: TEXT, fontSize: 12 }}>
+                          <span style={{ fontFamily: MONT, fontSize: 10, fontWeight: 500, letterSpacing: "0.14em", textTransform: "uppercase", color: T.ink30, minWidth: 54 }}>{c.ref}</span>
+                          <span style={{ color: T.ink60, minWidth: 130 }}>{c.label}</span>
+                          <span style={{ color: T.ink30, textDecoration: "line-through" }}>{String(c.from)}</span>
+                          <span style={{ color: T.ink30 }}>→</span>
+                          <span style={{ color: T.ink, fontWeight: 500 }}>{String(c.to)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-wrap justify-end px-6 py-4" style={{ gap: 10, borderTop: `1px solid ${T.rule}` }}>
+              <Button onClick={() => { setImportOpen(false); setPlan(null); }}>Cancel</Button>
+              <Button variant="solid" onClick={applyImport} disabled={!plan || !!plan.error || !plan.changes?.length}>
+                <Check size={13} /> {plan?.changes?.length ? `Apply ${plan.changes.length} change${plan.changes.length === 1 ? "" : "s"}` : "Apply"}
+              </Button>
             </div>
           </div>
         </div>
