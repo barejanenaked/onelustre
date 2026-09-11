@@ -113,6 +113,57 @@ const clearSession = () => {
   try { localStorage.removeItem(SESSION_KEY); } catch {}
 };
 
+/* Margins offline.
+   With no connection a save can't reach the book, and the edit would be
+   lost on the next reload. Margins are the one number worth changing on
+   the move (a client asks for a price on the spot), so each margin edit
+   is also written down here, on this device, as a small intent: which
+   stone, what percentage. Nothing else is queued — every other edit
+   still needs a connection.
+
+   Only the intent is kept, never a copy of the whole book. On reconnect
+   the current book is fetched fresh and just these percentages are laid
+   back on top, so a margin changed here can't erase anything anyone else
+   changed while this device was offline. */
+const OUTBOX_KEY = "one-lustre:margin-outbox";
+const HOUSE = "house";
+const readOutbox = () => {
+  try {
+    const l = JSON.parse(localStorage.getItem(OUTBOX_KEY));
+    return Array.isArray(l) ? l : [];
+  } catch {
+    return [];
+  }
+};
+const writeOutbox = (list) => {
+  try {
+    if (list.length) localStorage.setItem(OUTBOX_KEY, JSON.stringify(list));
+    else localStorage.removeItem(OUTBOX_KEY);
+  } catch {}
+};
+/* One entry per target — changing the same margin twice while offline
+   leaves the later figure, not both. */
+const queueMargin = (key, value) => {
+  const list = readOutbox().filter((e) => e.key !== key);
+  list.push({ key, value, at: Date.now() });
+  writeOutbox(list);
+  return list;
+};
+const dropSent = (sent) =>
+  writeOutbox(readOutbox().filter((e) => !sent.some((s) => s.key === e.key && s.at === e.at)));
+const applyOutbox = (list, items, settings) => {
+  let its = items;
+  let st = settings;
+  [...list].sort((a, b) => a.at - b.at).forEach((e) => {
+    if (e.key === HOUSE) st = { ...st, margin: e.value };
+    else {
+      const id = e.key.slice(5);
+      its = its.map((i) => (i.id === id ? { ...i, margin: e.value } : i));
+    }
+  });
+  return { items: its, settings: st };
+};
+
 const fluorFlag = (v = "") => {
   const t = String(v);
   if (/yellow/i.test(t)) return `${t} fluorescence`;
@@ -2101,6 +2152,7 @@ export default function OneLustre() {
   const [loadError, setLoadError] = useState(false);
   const [retryTick, setRetryTick] = useState(0);
   const [err, setErr] = useState("");
+  const [pending, setPending] = useState(() => readOutbox().length);
   const [session] = useState(readSession);
   const [view, setView] = useState(session?.view || "client");
   const [unlocked, setUnlocked] = useState(session?.view === "admin");
@@ -2310,6 +2362,10 @@ export default function OneLustre() {
   const persist = useCallback((nextItems, nextSettings, now = false, nextEnquiries) => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     const write = async () => {
+      /* Whatever margins are queued right now are included in the document
+         about to be written, so a successful write clears exactly those —
+         not anything typed while this one was in flight. */
+      const sent = readOutbox();
       try {
         const r = await window.storage.set(KEY, JSON.stringify({
           items: nextItems, settings: nextSettings,
@@ -2317,6 +2373,7 @@ export default function OneLustre() {
           seedVersion: SEED_VERSION,
         }), false, bookVersion.current);
         bookVersion.current = r.updatedAt;
+        if (sent.length) { dropSent(sent); setPending(readOutbox().length); }
         setErr("");
       } catch (e) {
         if (e?.conflict) {
@@ -2325,6 +2382,10 @@ export default function OneLustre() {
              blind would silently erase it. This change stays only in this
              tab's memory; reloading picks up the latest book instead. */
           setErr("This book was just updated elsewhere. Your last change wasn't saved — reload the page to see the latest, then redo it.");
+        } else if (sent.length) {
+          /* Offline, most likely. The margins are written down on this
+             device and go up on their own once there's a connection. */
+          setErr("");
         } else {
           setErr("Changes could not be saved. Try again.");
         }
@@ -2358,6 +2419,80 @@ export default function OneLustre() {
     persist(nextItems, nextSettings, now, nextEnquiries);
   };
 
+  /* Send up margins changed while offline. The book is fetched fresh and
+     only those percentages are laid on top, so anything changed elsewhere
+     in the meantime survives — and comes back into this tab as a result.
+     A conflict means someone saved in the instant between the read and
+     the write; re-reading and re-applying is safe, so it's worth a couple
+     of attempts before leaving it queued for next time. */
+  const syncing = useRef(false);
+  const flushOutbox = useCallback(async () => {
+    if (syncing.current || !readOutbox().length) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+    syncing.current = true;
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const queued = readOutbox();
+        if (!queued.length) break;
+        try {
+          const res = await window.storage.get(KEY);
+          const parsed = JSON.parse(res.value);
+          const eqs = parsed.enquiries || [];
+          const merged = applyOutbox(
+            queued,
+            parsed.items || [],
+            { ...defaultSettings, ...(parsed.settings || {}) }
+          );
+          const r = await window.storage.set(KEY, JSON.stringify({
+            items: merged.items, settings: merged.settings,
+            enquiries: eqs, seedVersion: SEED_VERSION,
+          }), false, res.updatedAt);
+          bookVersion.current = r.updatedAt;
+          dropSent(queued);
+          lastWrite.current = { i: merged.items, s: merged.settings, q: eqs };
+          setItems(merged.items); setSettings(merged.settings); setEnquiries(eqs);
+          setPending(readOutbox().length);
+          setErr("");
+          setSaved(queued.length === 1 ? "Margin synced." : `${queued.length} margins synced.`);
+          setTimeout(() => setSaved(""), 3200);
+          break;
+        } catch (e) {
+          if (!e?.conflict) break; /* still offline — leave it queued */
+        }
+      }
+    } finally {
+      syncing.current = false;
+    }
+  }, []);
+
+  /* Flush once the book is open. */
+  useEffect(() => {
+    if (loading || loadError) return;
+    flushOutbox();
+  }, [loading, loadError, flushOutbox]);
+
+  /* Coming back online has to be heard even when the book itself failed to
+     load — that's exactly the state a device reloaded with no signal sits
+     in, and the margins waiting on it are the ones most likely to be
+     stranded. Reconnecting sends them up and reopens the book. */
+  const loadFailed = useRef(false);
+  useEffect(() => { loadFailed.current = loadError; }, [loadError]);
+  useEffect(() => {
+    const onOnline = async () => {
+      await flushOutbox();
+      if (loadFailed.current) { setLoading(true); setRetryTick((n) => n + 1); }
+    };
+    window.addEventListener("online", onOnline);
+    /* The online event isn't always fired when a connection quietly comes
+       back (a dozing tab, a captive portal). While anything is waiting,
+       try again on a slow timer as a backstop. */
+    const tick = setInterval(() => { if (readOutbox().length) flushOutbox(); }, 60000);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      clearInterval(tick);
+    };
+  }, [flushOutbox]);
+
   const sendEnquiry = (item) => {
     if (!client) return;
     const already = enquiries.some((e) => e.itemId === item.id && e.clientId === client.id);
@@ -2370,13 +2505,20 @@ export default function OneLustre() {
     commit(items, settings, true, [rec, ...enquiries]);
   };
   const dismissEnquiry = (id) => commit(items, settings, true, enquiries.filter((e) => e.id !== id));
-  const patch = (id, fields) => commit(items.map((i) => (i.id === id ? { ...i, ...fields } : i)));
+  const patch = (id, fields) => {
+    if ("margin" in fields) setPending(queueMargin(`item:${id}`, fields.margin).length);
+    commit(items.map((i) => (i.id === id ? { ...i, ...fields } : i)));
+  };
   const remove = (id) => commit(items.filter((i) => i.id !== id));
   const toggleCompare = (id) =>
     setCompare((c) => (c.includes(id) ? c.filter((x) => x !== id) : c.length >= 4 ? c : [...c, id]));
   const compareList = useMemo(() => compare.map((id) => items.find((i) => i.id === id)).filter(Boolean), [compare, items]);
 
-  const setMargin = (n) => commit(items, { ...settings, margin: Math.max(0, Math.min(300, isNaN(n) ? 0 : n)) });
+  const setMargin = (n) => {
+    const v = Math.max(0, Math.min(300, isNaN(n) ? 0 : n));
+    setPending(queueMargin(HOUSE, v).length);
+    commit(items, { ...settings, margin: v });
+  };
 
   const admin = view === "admin" && unlocked;
   const client = useMemo(
@@ -2520,6 +2662,14 @@ export default function OneLustre() {
 
   const saveDraft = () => {
     const d = { ...draft, cost: parseFloat(draft.cost) || 0 };
+    if (d.id) {
+      /* A new stone can't be created without a connection, so only a
+         margin changed on a stone the book already has is worth queuing. */
+      const was = items.find((i) => i.id === d.id);
+      if (was && (was.margin ?? null) !== (d.margin ?? null)) {
+        setPending(queueMargin(`item:${d.id}`, d.margin ?? null).length);
+      }
+    }
     if (d.id) commit(items.map((i) => (i.id === d.id ? d : i)));
     else commit([{ ...d, id: `s${Date.now()}`, added: new Date().toISOString().slice(0, 10) }, ...items]);
     setDraft(null);
@@ -2583,6 +2733,12 @@ export default function OneLustre() {
           <div style={{ fontFamily: TEXT, fontSize: 13, color: T.onWine60, marginTop: 10, lineHeight: 1.6 }}>
             Check your connection and try again — nothing has been changed.
           </div>
+          {pending > 0 && (
+            <div style={{ fontFamily: TEXT, fontSize: 13, color: T.gold, marginTop: 12, lineHeight: 1.6 }}>
+              {pending === 1 ? "1 margin change is" : `${pending} margin changes are`} still saved on
+              this device — {pending === 1 ? "it goes" : "they go"} up as soon as the book opens again.
+            </div>
+          )}
           <button onClick={() => { setLoading(true); setRetryTick((n) => n + 1); }} style={{
             marginTop: 20, fontFamily: TEXT, fontSize: 11, letterSpacing: "0.28em",
             textTransform: "uppercase", padding: "13px 28px", background: T.gold, color: T.ink,
@@ -2700,6 +2856,18 @@ export default function OneLustre() {
         <div className="mx-auto px-5 sm:px-8 py-3" style={{ maxWidth: 1280 }}>
           <div className="flex items-center" style={{ gap: 8, color: T.onWine60, fontFamily: TEXT, fontSize: 13 }}>
             <AlertCircle size={14} /> {err}
+          </div>
+        </div>
+      )}
+      {pending > 0 && (
+        <div className="mx-auto px-5 sm:px-8 pt-3" style={{ maxWidth: 1280 }}>
+          <div className="inline-flex items-start px-3 py-2" style={{ gap: 8, background: T.goldSoft, color: T.ink, fontFamily: MONT, fontSize: 12, fontWeight: 500, maxWidth: 640 }}>
+            <Loader2 size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span>
+              {pending === 1 ? "1 margin change is" : `${pending} margin changes are`} saved on this
+              device and will go up on their own when you're back online. Everything else still needs
+              a connection.
+            </span>
           </div>
         </div>
       )}
@@ -3355,7 +3523,10 @@ export default function OneLustre() {
       {draft && <Editor draft={draft} setDraft={setDraft} clients={settings.clients || []} onSave={saveDraft} onClose={() => setDraft(null)} />}
       {showSettings && (
         <SettingsPanel settings={settings}
-          save={(s) => { commit(items, s, true); setSaved("Settings saved."); setTimeout(() => setSaved(""), 3200); }}
+          save={(s) => {
+            if (s.margin !== settings.margin) setPending(queueMargin(HOUSE, s.margin).length);
+            commit(items, s, true); setSaved("Settings saved."); setTimeout(() => setSaved(""), 3200);
+          }}
           onClose={() => setShowSettings(false)} />
       )}
 
