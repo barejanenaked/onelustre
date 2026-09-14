@@ -1040,7 +1040,11 @@ function StoneCard({ item, settings, onOpen, showCost, ticked, onTick, hidePrice
       <div className="p-6" style={{ position: "relative" }}>
         <div className="flex items-start justify-between">
           <Label>{item.origin === "Lab-Grown" ? "Lab-grown" : "Natural"} {item.category}</Label>
-          <div className="flex" style={{ gap: 12 }}>
+          <div className="flex flex-wrap" style={{ gap: 12 }}>
+            {/* First, because it is the one thing on the card meant to
+                carry the house's own opinion. It says nothing about where
+                the stone came from. */}
+            {item.bestMatch && <Label color={T.green}>Best match</Label>}
             {films > 0 && <Label color={T.gold}>Film</Label>}
             {photos > 0 && <Label color={T.gold}>Photo</Label>}
             {refs > 0 && <Label color={T.rust}>Cut reference</Label>}
@@ -1675,6 +1679,11 @@ function Editor({ draft, setDraft, clients, onSave, onClose }) {
                 <SelectInput allowBlank={false} value={d.hidden ? "Held back" : "Shown"}
                   onChange={(e) => set("hidden", e.target.value === "Held back")}
                   options={["Shown", "Held back"]} />
+              </Field>
+              <Field label="Best match">
+                <SelectInput allowBlank={false} value={d.bestMatch ? "Best match" : "Not marked"}
+                  onChange={(e) => set("bestMatch", e.target.value === "Best match")}
+                  options={["Not marked", "Best match"]} />
               </Field>
               <Field label="Note shown to client" wide>
                 <TextInput value={d.notes} onChange={(e) => set("notes", e.target.value)} placeholder="e.g. Priced as a matched pair." />
@@ -2848,7 +2857,7 @@ export default function OneLustre() {
     id: "", kind: "single", category: "Diamond", origin: "Natural", shape: "Round Brilliant",
     stones: [blankStone()], supplier: "", supplierLocation: "", supplierCountry: "",
     cost: "", costCurrency: "USD", margin: null, discount: 0, indicative: false, priceTbc: false,
-    status: "Available", notes: "", tradeNote: "", media: [], clients: [],
+    status: "Available", notes: "", tradeNote: "", media: [], clients: [], bestMatch: false,
   });
 
   const saveDraft = () => {
