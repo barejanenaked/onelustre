@@ -394,6 +394,12 @@ const provenanceLine = (it, admin) => {
 
 const isVideo = (url = "") => /^data:video\//i.test(url) || /\.(mp4|mov|webm|m4v)(\?|$)/i.test(url);
 const isEmbedded = (url = "") => /^data:/i.test(url);
+/* A rotation, a film and a hosted viewer all move; a still does not. The
+   card says which, using the same test the viewer uses to choose between
+   a video and an image, so the label can never promise something other
+   than what opening it shows. */
+const isFilmMedia = (m) =>
+  (Array.isArray(m.frames) && m.frames.length > 0) || !!m.href || isVideo(m.url || "");
 
 /* The media store accepts these and nothing else, so a file's type has to
    be worked out before it is sent rather than guessed at afterwards. */
@@ -1008,7 +1014,9 @@ function StoneCard({ item, settings, onOpen, showCost, ticked, onTick, hidePrice
   const other = cc === "SGD" ? "USD" : "SGD";
   const [hover, setHover] = useState(false);
   const shown = (item.media || []).filter((m) => (m.url || m.frames || m.href) && (showCost || m.client));
-  const films = shown.filter((m) => !m.reference).length;
+  const ofTheStone = shown.filter((m) => !m.reference);
+  const films = ofTheStone.filter(isFilmMedia).length;
+  const photos = ofTheStone.length - films;
   const refs = shown.filter((m) => m.reference).length;
   return (
     <button
@@ -1034,6 +1042,7 @@ function StoneCard({ item, settings, onOpen, showCost, ticked, onTick, hidePrice
           <Label>{item.origin === "Lab-Grown" ? "Lab-grown" : "Natural"} {item.category}</Label>
           <div className="flex" style={{ gap: 12 }}>
             {films > 0 && <Label color={T.gold}>Film</Label>}
+            {photos > 0 && <Label color={T.gold}>Photo</Label>}
             {refs > 0 && <Label color={T.rust}>Cut reference</Label>}
             {item.stones.some((x) => CERTS[(x.certNo || "").trim()]) && <Label color={T.gold}>Certificate</Label>}
             {item.kind === "pair" && <Label color={T.gold}>Pair</Label>}
