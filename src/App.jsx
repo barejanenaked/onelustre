@@ -572,6 +572,18 @@ const offRapPct = (it, st) => {
   if (!rap) return null;
   return ((rap - costUSD(it, st)) / rap) * 100;
 };
+/* What a quoted price does not yet cover depends on where the stone is
+   sitting. A Singapore stone is quoted before GST; one on a trading floor
+   in India, Hong Kong or Bangkok is quoted as the stone alone, with tax,
+   insurance and carriage still to come. Shown wherever a figure is shown,
+   so nobody reads a number as the landed cost. */
+const PRICE_EXCLUDES = {
+  Singapore: "GST not included",
+  India: "VAT, insurance and delivery not included",
+  "Hong Kong": "VAT, insurance and delivery not included",
+  Thailand: "VAT, insurance and delivery not included",
+};
+const priceExcludes = (it) => PRICE_EXCLUDES[(it.supplierCountry || "").trim()] || "";
 const caratLabel = (it) => it.stones.map((s) => (parseFloat(s.carat) || 0).toFixed(2)).join("  +  ");
 const specLine = (it) => {
   const s = it.stones[0] || {};
@@ -1051,6 +1063,11 @@ function StoneCard({ item, settings, onOpen, showCost, ticked, onTick, hidePrice
                   {money(convert(usd, other, settings), other)}
                 </div>
               )}
+              {!hidePrice && !item.priceTbc && priceExcludes(item) && (
+                <div style={{ fontFamily: TEXT, fontSize: 11, color: T.ink30, marginTop: 4, lineHeight: 1.5 }}>
+                  {priceExcludes(item)}
+                </div>
+              )}
               {showCost && (
                 <div style={{ fontFamily: TEXT, fontSize: 11, color: T.ink30, marginTop: 4 }}>
                   {item.priceTbc
@@ -1244,13 +1261,20 @@ function DetailSheet({ item, settings, onClose, admin, onCert, pricesVisible = t
                   Price upon enquiry
                 </div>
               ) : (
-                <div className="flex flex-wrap items-baseline mt-3" style={{ gap: 24 }}>
-                  {codes.map((c, i) => (
-                    <span key={c} style={{ fontFamily: DISPLAY, fontSize: i === 0 ? 36 : 21, color: i === 0 ? T.ink : T.ink60, fontWeight: 400 }}>
-                      {money(convert(usd, c, settings), c)}
-                    </span>
-                  ))}
-                </div>
+                <>
+                  <div className="flex flex-wrap items-baseline mt-3" style={{ gap: 24 }}>
+                    {codes.map((c, i) => (
+                      <span key={c} style={{ fontFamily: DISPLAY, fontSize: i === 0 ? 36 : 21, color: i === 0 ? T.ink : T.ink60, fontWeight: 400 }}>
+                        {money(convert(usd, c, settings), c)}
+                      </span>
+                    ))}
+                  </div>
+                  {priceExcludes(item) && (
+                    <div style={{ fontFamily: MONT, fontSize: 11.5, color: T.ink30, marginTop: 8, letterSpacing: "0.04em" }}>
+                      {priceExcludes(item)} · held in {item.supplierCountry}
+                    </div>
+                  )}
+                </>
               )}
               {admin && pricesVisible && (
                 <div className="mt-4" style={{ fontFamily: TEXT, fontSize: 13, color: T.ink60, lineHeight: 1.7 }}>
@@ -1317,6 +1341,8 @@ function CompareSheet({ list, settings, admin, pricesVisible = true, onClose, on
     ["Held in", (i) => (admin ? (i.supplierLocation || i.supplierCountry) : i.supplierCountry) || "—"],
     ["Price", (i) => (admin && !pricesVisible ? "Hidden" : (!admin && !settings.clientPricesVisible) || i.priceTbc
       ? "Price upon enquiry" : money(convert(sellUSD(i, settings), "SGD", settings), "SGD"))],
+    ["Price excludes", (i) => ((admin && !pricesVisible) || (!admin && !settings.clientPricesVisible) || i.priceTbc
+      ? "—" : priceExcludes(i) || "—")],
   ];
   const tradeRows = [
     ["Supplier", (i) => i.supplier || "—"],
