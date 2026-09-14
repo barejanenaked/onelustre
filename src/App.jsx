@@ -1458,7 +1458,17 @@ function Editor({ draft, setDraft, clients, onSave, onClose }) {
   const [uploadError, setUploadError] = useState("");
   const fileInputRef = useRef(null);
   const uploadFile = async (file) => {
-    if (!file) return;
+    /* Coming back from the picker with nothing is common enough on an iPad
+       — a photograph still only in iCloud, a share sheet that returned
+       empty — that staying silent here reads as a dead button. */
+    if (!file) {
+      setUploadError("Nothing came back from the picker. If that photograph is only in iCloud, open it in Photos once so it downloads to this iPad, then try again.");
+      return;
+    }
+    if (!file.size) {
+      setUploadError(`"${file.name || "That file"}" came through empty. If it is only in iCloud, open it in Photos once so it downloads to this iPad, then try again.`);
+      return;
+    }
     if (file.size > 100 * 1024 * 1024) {
       setUploadError("That file is over 100MB — trim it down or share a link instead.");
       return;
@@ -1499,6 +1509,9 @@ function Editor({ draft, setDraft, clients, onSave, onClose }) {
       );
     } finally {
       setUploading(false);
+      /* Emptied only now the file has been read, so choosing the same one
+         again still counts as a fresh choice. */
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
@@ -1568,8 +1581,12 @@ function Editor({ draft, setDraft, clients, onSave, onClose }) {
             <div className="flex items-center justify-between" style={{ gap: 14 }}>
               <Label color={T.gold}>Film and photographs</Label>
               <div className="flex items-center" style={{ gap: 14 }}>
-                <input ref={fileInputRef} type="file" accept="video/*,image/*" style={{ display: "none" }}
-                  onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) uploadFile(f); }} />
+                {/* The input is emptied after the upload finishes, not here.
+                    Clearing it while the chosen file is still in hand
+                    releases the file underneath on iOS, so the upload had
+                    nothing left to send. */}
+                <input ref={fileInputRef} type="file" accept="image/*,video/*" style={{ display: "none" }}
+                  onChange={(e) => uploadFile(e.target.files?.[0])} />
                 <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
                   style={{ fontFamily: TEXT, fontSize: 10, letterSpacing: "0.18em", color: T.gold, textTransform: "uppercase",
                     display: "inline-flex", alignItems: "center", gap: 5, opacity: uploading ? 0.6 : 1 }}>
@@ -1927,7 +1944,16 @@ function SupplierDesk({ supplier, items, settings, onSave, onSaveProfile, onLock
   });
 
   const attach = async (file) => {
-    if (!file) return;
+    /* Same silence as the trade desk had: a picker that hands back nothing
+       looks like a button that does nothing. */
+    if (!file) {
+      setNote("Nothing came back from the picker. If that file is only in iCloud, open it once so it downloads to this device, then try again.");
+      return;
+    }
+    if (!file.size) {
+      setNote("That file came through empty. If it is only in iCloud, open it once so it downloads to this device, then try again.");
+      return;
+    }
     if (file.size > 2.6 * 1024 * 1024) {
       setNote("That film is too large. Please send one under 2.5 MB, or paste a link instead.");
       return;
