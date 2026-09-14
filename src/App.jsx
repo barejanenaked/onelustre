@@ -395,6 +395,19 @@ const provenanceLine = (it, admin) => {
 const isVideo = (url = "") => /^data:video\//i.test(url) || /\.(mp4|mov|webm|m4v)(\?|$)/i.test(url);
 const isEmbedded = (url = "") => /^data:/i.test(url);
 
+/* The media store accepts these and nothing else, so a file's type has to
+   be worked out before it is sent rather than guessed at afterwards. */
+const MIME_BY_EXT = {
+  jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
+  heic: "image/heic", heif: "image/heic",
+  mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", webm: "video/webm",
+};
+const EXT_BY_MIME = {
+  "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic",
+  "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm",
+};
+const ALLOWED_MIME = new Set(Object.keys(EXT_BY_MIME));
+
 const PLOY = { supplier: "Ploy — Dollar Diamonds", supplierId: "sup_ploy", supplierLocation: "Gem Tower, Bangkok",
   supplierCountry: "Thailand", shipsFrom: "Hong Kong" };
 const GODGIFT = { supplier: "Syed — Godgift", supplierId: "sup_godgift", supplierLocation: "JTC, Bangkok", supplierCountry: "Thailand" };
@@ -1444,20 +1457,37 @@ function Editor({ draft, setDraft, clients, onSave, onClose }) {
     setUploading(true);
     setUploadError("");
     try {
-      const ext = (file.name.split(".").pop() || "mp4").toLowerCase();
-      const path = `${d.id || "new"}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      const ext = (file.name.split(".").pop() || "").toLowerCase();
+      /* An iPad routinely hands over a file with no type at all —
+         anything that came through iCloud Drive or the Files app. The
+         store only accepts a named list of types, so the old fallback of
+         "application/octet-stream" was refused every time, and the
+         refusal was then reported as a connection problem. Read the type
+         off the extension instead. */
+      const type = MIME_BY_EXT[ext] || (ALLOWED_MIME.has(file.type) ? file.type : "");
+      if (!type) {
+        setUploadError("That kind of file can't be stored — photographs (JPG, PNG, HEIC) and films (MP4, MOV, WEBM) only.");
+        return;
+      }
+      const path = `${d.id || "new"}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext || EXT_BY_MIME[type]}`;
       const { error } = await supabase.storage.from("book-media").upload(path, file, {
-        cacheControl: "3600", upsert: false, contentType: file.type || "application/octet-stream",
+        cacheControl: "3600", upsert: false, contentType: type,
       });
       if (error) throw error;
       const { data } = supabase.storage.from("book-media").getPublicUrl(path);
       setDraft({ ...d, media: [...(d.media || []), { url: data.publicUrl, caption: file.name, client: false }] });
     } catch (e) {
-      /* Show a plain message rather than a raw browser/API error — the
-         specifics (e.g. "Failed to fetch" on a dropped connection) aren't
-         useful to act on, and nothing has been changed. */
+      /* Say which of the two it actually was. Blaming the connection for
+         a refused file type sends you looking in the wrong place. */
       console.error("Upload failed:", e);
-      setUploadError("Couldn't upload that file — check your connection and try again.");
+      const msg = String(e?.message || "");
+      setUploadError(
+        /mime|content type|not supported|invalid_mime/i.test(msg)
+          ? "That kind of file can't be stored — photographs (JPG, PNG, HEIC) and films (MP4, MOV, WEBM) only."
+          : /size|too large|exceeded|payload/i.test(msg)
+            ? "That file is too large for the store."
+            : "Couldn't upload that file — check your connection and try again."
+      );
     } finally {
       setUploading(false);
     }
