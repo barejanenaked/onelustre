@@ -398,9 +398,13 @@ const isEmbedded = (url = "") => /^data:/i.test(url);
 const PLOY = { supplier: "Ploy — Dollar Diamonds", supplierId: "sup_ploy", supplierLocation: "Gem Tower, Bangkok",
   supplierCountry: "Thailand", shipsFrom: "Hong Kong" };
 const GODGIFT = { supplier: "Syed — Godgift", supplierId: "sup_godgift", supplierLocation: "JTC, Bangkok", supplierCountry: "Thailand" };
-const MB = { supplier: "M&B Diamonds", supplierId: "sup_mb", supplierLocation: "Singapore", supplierCountry: "Singapore",
+/* Location is the building or district within the country — "Gem Tower,
+   Bangkok" against Thailand. A house with nothing more precise to say
+   than its own country leaves it blank rather than printing the country
+   twice. */
+const MB = { supplier: "M&B Diamonds", supplierId: "sup_mb", supplierLocation: "", supplierCountry: "Singapore",
   roughOrigin: "South Africa", cutIn: "Dubai" };
-const SMT = { supplier: "Mr Shing — SMT Jewellery", supplierId: "sup_smt", supplierLocation: "Singapore", supplierCountry: "Singapore" };
+const SMT = { supplier: "Mr Shing — SMT Jewellery", supplierId: "sup_smt", supplierLocation: "", supplierCountry: "Singapore" };
 const CUT_REFERENCE = [
   { frames: SPIN_CMPA, client: true, reference: true,
     caption: "A ten hearts and arrows cut shown beside a typical triple-excellent round. Neither is the stone offered here — both are the cutter's own demonstration." },
@@ -411,7 +415,7 @@ const CUT_REFERENCE = [
 const PEARL = { supplier: "Ravi — Pearl Diamond", supplierId: "sup_pearl",
   supplierLocation: "Surat & Mumbai", supplierCountry: "India", shipsFrom: "India" };
 
-const JANNPAUL = { supplier: "Jann Paul", supplierId: "sup_jannpaul", supplierLocation: "Singapore", supplierCountry: "Singapore" };
+const JANNPAUL = { supplier: "Jann Paul", supplierId: "sup_jannpaul", supplierLocation: "", supplierCountry: "Singapore" };
 const jp = (carat, colour, clarity) => ({
   ...blankStone(), carat, colour, clarity,
   cutStyle: "10 Hearts & Arrows", cert: "JannPaul", certNo: "", noCert: true,
