@@ -381,8 +381,11 @@ const COUNTRIES = ["Belgium", "Botswana", "Canada", "China", "Hong Kong", "India
   "Namibia", "Russia", "Singapore", "South Africa", "Thailand", "United Arab Emirates",
   "United Kingdom", "United States"];
 const CUTTING_CENTRES = ["Antwerp", "Dubai", "Mumbai", "New York", "Ramat Gan", "Surat", "Tel Aviv"];
-/* Trade sees the building. A client sees the country and no further. */
-const heldIn = (it, admin) => (admin ? (it.supplierLocation || it.supplierCountry) : it.supplierCountry);
+/* Where the house sits is not where the stone sits: most are ordered in
+   from the office that holds them, so telling a client a stone is "held
+   in" somewhere says something untrue. Trade keeps it — it drives the
+   shipping and the tax line — and the client board says nothing at all. */
+const heldIn = (it, admin) => (admin ? it.supplierLocation || it.supplierCountry : "");
 const provenanceLine = (it, admin) => {
   const bits = [];
   if (it.roughOrigin) bits.push(it.roughOrigin);
@@ -1265,8 +1268,7 @@ function DetailSheet({ item, settings, onClose, admin, onCert, pricesVisible = t
                 <Label color={T.gold}>Provenance</Label>
                 <div className="grid grid-cols-2 sm:grid-cols-3 mt-3" style={{ gap: 18 }}>
                   {[["Rough from", item.roughOrigin], ["Cut in", item.cutIn],
-                    ["Held in", heldIn(item, admin)],
-                    ...(admin ? [["Ships from", item.shipsFrom]] : [])].map(([k, v]) => (
+                    ...(admin ? [["Held in", heldIn(item, admin)], ["Ships from", item.shipsFrom]] : [])].map(([k, v]) => (
                     <div key={k}>
                       <Label>{k}</Label>
                       <div style={{ fontFamily: TEXT, fontSize: 14, color: v ? T.ink : T.ink30, marginTop: 3 }}>{v || "—"}</div>
@@ -1301,7 +1303,7 @@ function DetailSheet({ item, settings, onClose, admin, onCert, pricesVisible = t
                   </div>
                   {priceExcludes(item) && (
                     <div style={{ fontFamily: MONT, fontSize: 11.5, color: T.ink30, marginTop: 8, letterSpacing: "0.04em" }}>
-                      {priceExcludes(item)} · held in {item.supplierCountry}
+                      {priceExcludes(item)}
                     </div>
                   )}
                 </>
@@ -1368,7 +1370,6 @@ function CompareSheet({ list, settings, admin, pricesVisible = true, onClose, on
     ["Report", (i) => i.stones.map((s) => `${s.cert || ""} ${s.certNo || "—"}`).join("  ·  ")],
     ["Rough origin", (i) => i.roughOrigin || "—"],
     ["Cut in", (i) => i.cutIn || "—"],
-    ["Held in", (i) => (admin ? (i.supplierLocation || i.supplierCountry) : i.supplierCountry) || "—"],
     ["Price", (i) => (admin && !pricesVisible ? "Hidden" : (!admin && !settings.clientPricesVisible) || i.priceTbc
       ? "Price upon enquiry" : money(convert(sellUSD(i, settings), "SGD", settings), "SGD"))],
     ["Price excludes", (i) => ((admin && !pricesVisible) || (!admin && !settings.clientPricesVisible) || i.priceTbc
@@ -1376,6 +1377,7 @@ function CompareSheet({ list, settings, admin, pricesVisible = true, onClose, on
   ];
   const tradeRows = [
     ["Supplier", (i) => i.supplier || "—"],
+    ["Held in", (i) => i.supplierLocation || i.supplierCountry || "—"],
     ["Ships from", (i) => i.shipsFrom || "—"],
     ["Cost", (i) => (!pricesVisible ? "Hidden" : i.priceTbc ? "TBC" : money(i.cost, i.costCurrency || "USD"))],
     ["Cost / ct", (i) => (!pricesVisible ? "Hidden" : i.priceTbc ? "—" : money(costUSD(i, settings) / (totalCarat(i) || 1), "USD"))],
